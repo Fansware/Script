@@ -1,0 +1,991 @@
+--========================================================
+-- SHOOTER SYSTEM
+-- RAGE + LEGIT + ESP + AIMBOT + TRIGGERBOT
+-- Single LocalScript
+-- R6 / R15 / Custom Motor6D rigs
+--========================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+--========================================================
+-- CONFIG
+--========================================================
+
+local Config = {
+
+	MenuKey = Enum.KeyCode.K, -- Cambiado a la letra K para abrir/cerrar el menú
+	AimKey = Enum.KeyCode.Q,
+
+	Rage = {
+		Aimbot = false,
+		TriggerBot = false,
+
+		Smoothness = 0.08,
+		FOV = 180,
+
+		TargetPart = "Head",
+		MaxDistance = 1500,
+
+		TeamCheck = true,
+		VisibleCheck = true,
+	},
+
+	Legit = {
+		Aimbot = false,
+
+		Smoothness = 0.15,
+		FOV = 100,
+
+		TargetPart = "Head",
+		MaxDistance = 750,
+
+		TeamCheck = true,
+		VisibleCheck = true,
+
+		ESP = {
+			Enabled = false,
+
+			Box = false,
+			Skeleton = false,
+			Tracer = false,
+			Name = false,
+			Distance = false,
+
+			MaxDistance = 1000,
+			TeamCheck = true,
+		}
+	}
+}
+
+--========================================================
+-- STATE
+--========================================================
+
+local MenuOpen = true
+local AimHeld = false
+local CurrentTab = "Rage"
+
+local ESP = {}
+
+--========================================================
+-- REMOTE AUTOMATICO
+--========================================================
+
+local RemoteFolder =
+	ReplicatedStorage:FindFirstChild("ShooterRemotes")
+
+if not RemoteFolder then
+	RemoteFolder = Instance.new("Folder")
+	RemoteFolder.Name = "ShooterRemotes"
+	RemoteFolder.Parent = ReplicatedStorage
+end
+
+local FireRemote =
+	RemoteFolder:FindFirstChild("Fire")
+
+if not FireRemote then
+	FireRemote = Instance.new("RemoteEvent")
+	FireRemote.Name = "Fire"
+	FireRemote.Parent = RemoteFolder
+end
+
+--========================================================
+-- CHARACTER UTILITIES
+--========================================================
+
+local function GetCharacter(player)
+	return player and player.Character
+end
+
+local function GetHumanoid(character)
+	if not character then
+		return nil
+	end
+
+	return character:FindFirstChildOfClass("Humanoid")
+end
+
+local function IsAlive(character)
+	local humanoid = GetHumanoid(character)
+
+	return humanoid ~= nil
+		and humanoid.Health > 0
+end
+
+local function GetRoot(character)
+	return character:FindFirstChild("HumanoidRootPart")
+		or character.PrimaryPart
+end
+
+local function GetHead(character)
+	return character:FindFirstChild("Head")
+end
+
+--========================================================
+-- TEAM CHECK
+--========================================================
+
+local function IsEnemy(player, teamCheck)
+
+	if player == LocalPlayer then
+		return false
+	end
+
+	if not teamCheck then
+		return true
+	end
+
+	if LocalPlayer.Team ~= nil
+		and player.Team ~= nil then
+
+		return player.Team ~= LocalPlayer.Team
+	end
+
+	return true
+end
+
+--========================================================
+-- TARGET PART
+--========================================================
+
+local function GetTargetPart(character)
+
+	local preferred = Config.Rage.TargetPart
+
+	if CurrentTab == "Legit" then
+		preferred = Config.Legit.TargetPart
+	end
+
+	local preferredPart =
+		character:FindFirstChild(preferred)
+
+	if preferredPart
+		and preferredPart:IsA("BasePart") then
+
+		return preferredPart
+	end
+
+	local head = GetHead(character)
+
+	if head then
+		return head
+	end
+
+	local root = GetRoot(character)
+
+	if root then
+		return root
+	end
+
+	for _, object in ipairs(character:GetChildren()) do
+
+		if object:IsA("BasePart") then
+			return object
+		end
+	end
+
+	return nil
+end
+
+--========================================================
+-- VISIBILITY CHECK
+--========================================================
+
+local function IsVisible(part, character)
+
+	if not part then
+		return false
+	end
+
+	if not Config.Rage.VisibleCheck
+		and CurrentTab == "Rage" then
+
+		return true
+	end
+
+	if not Config.Legit.VisibleCheck
+		and CurrentTab == "Legit" then
+
+		return true
+	end
+
+	local origin = Camera.CFrame.Position
+	local direction = part.Position - origin
+
+	local params = RaycastParams.new()
+
+	params.FilterType =
+		Enum.RaycastFilterType.Exclude
+
+	params.FilterDescendantsInstances = {
+		LocalPlayer.Character
+	}
+
+	local result = workspace:Raycast(
+		origin,
+		direction,
+		params
+	)
+
+	if not result then
+		return true
+	end
+
+	return result.Instance:IsDescendantOf(character)
+end
+
+--========================================================
+-- GET CLOSEST TARGET
+--========================================================
+
+local function GetClosestTarget()
+
+	local mousePosition =
+		UserInputService:GetMouseLocation()
+
+	local fov
+	local maxDistance
+	local teamCheck
+
+	if CurrentTab == "Rage" then
+
+		fov = Config.Rage.FOV
+		maxDistance = Config.Rage.MaxDistance
+		teamCheck = Config.Rage.TeamCheck
+
+	else
+
+		fov = Config.Legit.FOV
+		maxDistance = Config.Legit.MaxDistance
+		teamCheck = Config.Legit.TeamCheck
+	end
+
+	local closestPlayer = nil
+	local closestPart = nil
+
+	local smallestScreenDistance = fov
+
+	for _, player in ipairs(Players:GetPlayers()) do
+
+		if IsEnemy(player, teamCheck) then
+
+			local character =
+				GetCharacter(player)
+
+			if character and IsAlive(character) then
+
+				local target =
+					GetTargetPart(character)
+
+				if target then
+
+					local worldDistance =
+						(
+							Camera.CFrame.Position
+							- target.Position
+						).Magnitude
+
+					if worldDistance <= maxDistance then
+
+						local screenPosition,
+							onScreen =
+							Camera:WorldToViewportPoint(
+								target.Position
+							)
+
+						if onScreen
+							and screenPosition.Z > 0 then
+
+							local screenDistance =
+								(
+									Vector2.new(
+										screenPosition.X,
+										screenPosition.Y
+									)
+									- mousePosition
+								).Magnitude
+
+							if screenDistance
+								< smallestScreenDistance then
+
+								if IsVisible(
+									target,
+									character
+								) then
+
+									smallestScreenDistance =
+										screenDistance
+
+									closestPlayer =
+										player
+
+									closestPart =
+										target
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return closestPlayer, closestPart
+end
+
+--========================================================
+-- AIMBOT
+--========================================================
+
+local function AimAt(part, smoothness)
+
+	if not part then
+		return
+	end
+
+	local cameraPosition =
+		Camera.CFrame.Position
+
+	local direction =
+		part.Position - cameraPosition
+
+	if direction.Magnitude <= 0 then
+		return
+	end
+
+	local targetCFrame =
+		CFrame.lookAt(
+			cameraPosition,
+			cameraPosition + direction.Unit
+		)
+
+	Camera.CFrame =
+		Camera.CFrame:Lerp(
+			targetCFrame,
+			math.clamp(smoothness, 0.001, 1)
+		)
+end
+
+--========================================================
+-- TRIGGERBOT
+--========================================================
+
+local TriggerCooldown = false
+
+local function TriggerBot()
+
+	if TriggerCooldown then
+		return
+	end
+
+	local viewport =
+		Camera.ViewportSize
+
+	local center =
+		Vector2.new(
+			viewport.X / 2,
+			viewport.Y / 2
+		)
+
+	local ray =
+		Camera:ViewportPointToRay(
+			center.X,
+			center.Y
+		)
+
+	local params =
+		RaycastParams.new()
+
+	params.FilterType =
+		Enum.RaycastFilterType.Exclude
+
+	params.FilterDescendantsInstances = {
+		LocalPlayer.Character
+	}
+
+	local result =
+		workspace:Raycast(
+			ray.Origin,
+			ray.Direction * 1500,
+			params
+		)
+
+	if not result then
+		return
+	end
+
+	local character =
+		result.Instance:FindFirstAncestorOfClass(
+			"Model"
+		)
+
+	if not character then
+		return
+	end
+
+	local player =
+		Players:GetPlayerFromCharacter(
+			character
+		)
+
+	if not player then
+		return
+	end
+
+	if not IsEnemy(
+		player,
+		Config.Rage.TeamCheck
+	) then
+		return
+	end
+
+	if not IsAlive(character) then
+		return
+	end
+
+	TriggerCooldown = true
+
+	FireRemote:FireServer(
+		result.Position,
+		result.Instance
+	)
+
+	task.delay(0.08, function()
+		TriggerCooldown = false
+	end)
+end
+
+--========================================================
+-- ESP: MOTOR6D SKELETON
+--========================================================
+
+local function GetRigConnections(character)
+
+	local connections = {}
+
+	for _, object in ipairs(character:GetDescendants()) do
+
+		if object:IsA("Motor6D") then
+
+			local part0 = object.Part0
+			local part1 = object.Part1
+
+			if part0 and part1 then
+
+				table.insert(
+					connections,
+					{
+						part0,
+						part1
+					}
+				)
+			end
+		end
+	end
+
+	return connections
+end
+
+--========================================================
+-- ESP CREATION
+--========================================================
+
+local function CreateESP(player)
+
+	if player == LocalPlayer then
+		return
+	end
+
+	if ESP[player] then
+		return
+	end
+
+	local data = {
+		Connections = {},
+		Beams = {},
+		Box = nil,
+		BoxAdornee = nil,
+		Name = nil,
+		Distance = nil,
+		Tracer = nil,
+		TracerAttachment = nil,
+	}
+
+	local box =
+		Instance.new("SelectionBox")
+
+	box.Name = "ShooterESPBox"
+	box.LineThickness = 0.035
+	box.Color3 =
+		Color3.fromRGB(
+			255,
+			70,
+			70
+		)
+
+	box.SurfaceTransparency = 1
+	box.Visible = false
+	box.Parent = workspace
+
+	data.Box = box
+
+	local billboard =
+		Instance.new("BillboardGui")
+
+	billboard.Name = "ShooterESPInfo"
+	billboard.Size = UDim2.fromOffset(150, 40)
+	billboard.StudsOffset = Vector3.new(0, 3.2, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Enabled = false
+
+	local label =
+		Instance.new("TextLabel")
+
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextStrokeTransparency = 0.4
+	label.TextSize = 13
+	label.Font = Enum.Font.GothamBold
+	label.Parent = billboard
+
+	data.Name = billboard
+	data.NameLabel = label
+
+	local tracerPart =
+		Instance.new("Part")
+
+	tracerPart.Name = "ShooterTracer"
+	tracerPart.Anchored = true
+	tracerPart.CanCollide = false
+	tracerPart.CanTouch = false
+	tracerPart.CanQuery = false
+	tracerPart.Transparency = 1
+	tracerPart.Size = Vector3.new(0.05, 0.05, 0.05)
+	tracerPart.Parent = workspace
+
+	local attachment0 =
+		Instance.new("Attachment")
+
+	attachment0.Parent = tracerPart
+
+	local beam =
+		Instance.new("Beam")
+
+	beam.Attachment0 = attachment0
+	beam.Width0 = 0.025
+	beam.Width1 = 0.025
+	beam.FaceCamera = true
+	beam.Color = ColorSequence.new(Color3.fromRGB(255, 70, 70))
+	beam.Enabled = false
+	beam.Parent = tracerPart
+
+	data.Tracer = beam
+	data.TracerPart = tracerPart
+
+	ESP[player] = data
+end
+
+--========================================================
+-- REMOVE ESP
+--========================================================
+
+local function RemoveESP(player)
+
+	local data = ESP[player]
+
+	if not data then
+		return
+	end
+
+	if data.Box then
+		data.Box:Destroy()
+	end
+
+	if data.Name then
+		data.Name:Destroy()
+	end
+
+	if data.TracerPart then
+		data.TracerPart:Destroy()
+	end
+
+	for _, beam in pairs(data.Beams) do
+		if beam then
+			beam:Destroy()
+		end
+	end
+
+	ESP[player] = nil
+end
+
+--========================================================
+-- SKELETON BUILD
+--========================================================
+
+local function BuildSkeleton(player, data, character)
+
+	for _, beam in pairs(data.Beams) do
+		if beam then
+			beam:Destroy()
+		end
+	end
+
+	table.clear(data.Beams)
+
+	local connections = GetRigConnections(character)
+
+	for _, connection in ipairs(connections) do
+
+		local part0 = connection[1]
+		local part1 = connection[2]
+
+		local attachment0 =
+			Instance.new("Attachment")
+
+		attachment0.Name = "ShooterSkeletonA"
+		attachment0.Parent = part0
+
+		local attachment1 =
+			Instance.new("Attachment")
+
+		attachment1.Name = "ShooterSkeletonB"
+		attachment1.Parent = part1
+
+		local beam =
+			Instance.new("Beam")
+
+		beam.Attachment0 = attachment0
+		beam.Attachment1 = attachment1
+		beam.Width0 = 0.025
+		beam.Width1 = 0.025
+		beam.FaceCamera = true
+		beam.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+		beam.Parent = part0
+
+		table.insert(data.Beams, beam)
+	end
+end
+
+--========================================================
+-- UPDATE ESP
+--========================================================
+
+local function UpdateESP()
+
+	local settings = Config.Legit.ESP
+
+	for player, data in pairs(ESP) do
+
+		local character = GetCharacter(player)
+
+		local valid =
+			settings.Enabled
+			and character
+			and IsAlive(character)
+			and IsEnemy(player, settings.TeamCheck)
+
+		if not valid then
+
+			data.Box.Visible = false
+			data.Name.Enabled = false
+			data.Tracer.Enabled = false
+
+			for _, beam in pairs(data.Beams) do
+				beam.Enabled = false
+			end
+
+			continue
+		end
+
+		local root = GetRoot(character)
+
+		if not root then
+			continue
+		end
+
+		local distance =
+			(Camera.CFrame.Position - root.Position).Magnitude
+
+		if distance > settings.MaxDistance then
+
+			data.Box.Visible = false
+			data.Name.Enabled = false
+			data.Tracer.Enabled = false
+
+			continue
+		end
+
+		if settings.Box then
+			data.Box.Adornee = character
+			data.Box.Visible = true
+		else
+			data.Box.Visible = false
+		end
+
+		if settings.Name or settings.Distance then
+			data.Name.Adornee = GetHead(character) or root
+
+			local text = ""
+
+			if settings.Name then
+				text = player.Name
+			end
+
+			if settings.Distance then
+				if text ~= "" then
+					text = text .. "\n"
+				end
+				text = text .. math.floor(distance) .. " studs"
+			end
+
+			data.NameLabel.Text = text
+			data.Name.Enabled = true
+		else
+			data.Name.Enabled = false
+		end
+
+		if settings.Tracer then
+			local head = GetHead(character)
+
+			if head then
+				local targetAttachment = head:FindFirstChild("ShooterTracerTarget")
+
+				if not targetAttachment then
+					targetAttachment = Instance.new("Attachment")
+					targetAttachment.Name = "ShooterTracerTarget"
+					targetAttachment.Parent = head
+				end
+
+				data.TracerPart.CFrame = CFrame.new(Camera.CFrame.Position)
+				data.Tracer.Attachment1 = targetAttachment
+				data.Tracer.Enabled = true
+			end
+		else
+			data.Tracer.Enabled = false
+		end
+
+		if settings.Skeleton then
+			if #data.Beams == 0 then
+				BuildSkeleton(player, data, character)
+			end
+
+			for _, beam in pairs(data.Beams) do
+				beam.Enabled = true
+			end
+		else
+			for _, beam in pairs(data.Beams) do
+				beam.Enabled = false
+			end
+		end
+	end
+end
+
+--========================================================
+-- GUI CREATION & MENUS
+--========================================================
+
+local GUI = Instance.new("ScreenGui")
+GUI.Name = "ShooterMenu"
+GUI.ResetOnSpawn = false
+GUI.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local Main = Instance.new("Frame")
+Main.Size = UDIm2.fromOffset(650, 450)
+Main.Position = UDim2.fromScale(0.5, 0.5)
+Main.AnchorPoint = Vector2.new(0.5, 0.5)
+Main.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
+Main.BorderSizePixel = 0
+Main.Parent = GUI
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 12)
+MainCorner.Parent = Main
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -30, 0, 50)
+Title.Position = UDim2.fromOffset(20, 5)
+Title.BackgroundTransparency = 1
+Title.Text = "SHOOTER"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 21
+Title.Font = Enum.Font.GothamBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Main
+
+local Sidebar = Instance.new("Frame")
+Sidebar.Size = UDim2.fromOffset(155, 370)
+Sidebar.Position = UDim2.fromOffset(15, 65)
+Sidebar.BackgroundColor3 = Color3.fromRGB(11, 11, 15)
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = Main
+
+local SidebarCorner = Instance.new("UICorner")
+SidebarCorner.CornerRadius = UDim.new(0, 9)
+SidebarCorner.Parent = Sidebar
+
+local Content = Instance.new("ScrollingFrame")
+Content.Size = UDim2.new(1, -190, 1, -75)
+Content.Position = UDim2.fromOffset(180, 65)
+Content.BackgroundTransparency = 1
+Content.BorderSizePixel = 0
+Content.ScrollBarThickness = 4
+Content.CanvasSize = UDim2.new(0, 0, 0, 0)
+Content.Parent = Main
+
+local Layout = Instance.new("UIListLayout")
+Layout.Padding = UDim.new(0, 8)
+Layout.Parent = Content
+
+Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	Content.CanvasSize = UDim2.fromOffset(0, Layout.AbsoluteContentSize.Y + 10)
+end)
+
+local function CreateTab(text, position)
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(1, -20, 0, 45)
+	button.Position = UDim2.fromOffset(10, position)
+	button.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+	button.BorderSizePixel = 0
+	button.Text = text
+	button.TextColor3 = Color3.fromRGB(210, 210, 215)
+	button.TextSize = 14
+	button.Font = Enum.Font.GothamBold
+	button.Parent = Sidebar
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 7)
+	corner.Parent = button
+
+	return button
+end
+
+local RageTab = CreateTab("RAGE", 20)
+local LegitTab = CreateTab("LEGIT", 75)
+
+local function ClearContent()
+	for _, object in ipairs(Content:GetChildren()) do
+		if not object:IsA("UIListLayout") then
+			object:Destroy()
+		end
+	end
+end
+
+local function LoadRageMenu()
+	ClearContent()
+	
+	local function CreateToggle(name, value, callback)
+		local holder = Instance.new("Frame")
+		holder.Size = UDim2.new(1, -10, 0, 42)
+		holder.BackgroundColor3 = Color3.fromRGB(24, 24, 29)
+		holder.BorderSizePixel = 0
+		holder.Parent = Content
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 7)
+		corner.Parent = holder
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, -65, 1, 0)
+		label.Position = UDim2.fromOffset(12, 0)
+		label.BackgroundTransparency = 1
+		label.Text = name
+		label.TextColor3 = Color3.fromRGB(220, 220, 225)
+		label.TextSize = 13
+		label.Font = Enum.Font.GothamMedium
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.Parent = holder
+
+		local button = Instance.new("TextButton")
+		button.Size = UDim2.fromOffset(40, 21)
+		button.Position = UDim2.new(1, -52, 0.5, -10)
+		button.Text = ""
+		button.BorderSizePixel = 0
+		button.Parent = holder
+
+		local corner2 = Instance.new("UICorner")
+		corner2.CornerRadius = UDim.new(1, 0)
+		corner2.Parent = button
+
+		local state = value
+
+		local function Update()
+			if state then
+				button.BackgroundColor3 = Color3.fromRGB(85, 170, 255)
+			else
+				button.BackgroundColor3 = Color3.fromRGB(55, 55, 62)
+			end
+		end
+
+		Update()
+
+		button.MouseButton1Click:Connect(function()
+			state = not state
+			Update()
+			callback(state)
+		end)
+	end
+
+	CreateToggle("Rage Aimbot", Config.Rage.Aimbot, function(v)
+		Config.Rage.Aimbot = v
+	end)
+
+	CreateToggle("TriggerBot", Config.Rage.TriggerBot, function(v)
+		Config.Rage.TriggerBot = v
+	end)
+
+	CreateToggle("Team Check (Rage)", Config.Rage.TeamCheck, function(v)
+		Config.Rage.TeamCheck = v
+	end)
+
+	CreateToggle("Visible Check (Rage)", Config.Rage.VisibleCheck, function(v)
+		Config.Rage.VisibleCheck = v
+	end)
+end
+
+local function LoadLegitMenu()
+	ClearContent()
+
+	local function CreateToggle(name, value, callback)
+		local holder = Instance.new("Frame")
+		holder.Size = UDim2.new(1, -10, 0, 42)
+		holder.BackgroundColor3 = Color3.fromRGB(24, 24, 29)
+		holder.BorderSizePixel = 0
+		holder.Parent = Content
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 7)
+		corner.Parent = holder
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, -65, 1, 0)
+		label.Position = UDim2.fromOffset(12, 0)
+		label.BackgroundTransparency = 1
+		label.Text = name
+		label.TextColor3 = Color3.fromRGB(220, 220, 225)
+		label.TextSize = 13
+		label.Font = Enum.Font.GothamMedium
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.Parent = holder
+
+		local button = Instance.new("TextButton")
+		button.Size = UDim2.fromOffset(40, 21)
+		button.Position = UDim2.new(1, -52, 0.5, -10)
+		button.Text = ""
+		button.BorderSizePixel = 0
+		button.Parent = holder
+
+		local corner2 = Instance.new("UICorner")
+		corner2.CornerRadius = UDim.new(1, 0)
+		corner2.Parent = button
+
+		local state = value
+
+		local function Update()
+			if stat
